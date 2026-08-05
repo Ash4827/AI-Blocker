@@ -1,0 +1,76 @@
+{
+  "manifest_version": 3,
+  "name": "AI Post Blocker",
+  "version": "1.1.0",
+  "description": "Hides posts labeled or suspected as AI-generated on Instagram, X, Facebook, LinkedIn, Reddit, and TikTok.",
+  "permissions": ["storage", "offscreen"],
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://www.facebook.com/*",
+    "https://www.linkedin.com/*",
+    "https://www.reddit.com/*",
+    "https://www.tiktok.com/*",
+    "https://*.cdninstagram.com/*",
+    "https://*.fbcdn.net/*",
+    "https://pbs.twimg.com/*",
+    "https://*.licdn.com/*",
+    "https://*.redd.it/*",
+    "https://*.redditmedia.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["src/content/common.js", "src/content/instagram.js"],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["src/content/common.js", "src/content/twitter.js"],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.facebook.com/*"],
+      "js": ["src/content/common.js", "src/content/facebook.js"],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.linkedin.com/*"],
+      "js": ["src/content/common.js", "src/content/linkedin.js"],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.reddit.com/*"],
+      "js": ["src/content/common.js", "src/content/reddit.js"],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.tiktok.com/*"],
+      "js": ["src/content/common.js", "src/content/tiktok.js"],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

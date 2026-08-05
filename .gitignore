@@ -1,0 +1,12 @@
+*.log
+
+# Model conversion output (scripts/convert_to_onnx.py) — hosted as a
+# GitHub Release asset instead of committed, and the fp32 intermediate is
+# 327.5 MB, never meant to be tracked even temporarily.
+scripts/*.onnx
+
+# In case the conversion venv ever gets created inside the project
+# instead of in a scratch/temp dir.
+.venv/
+venv/
+onnxconv/

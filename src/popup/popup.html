@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>AI Post Blocker</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>AI Post Blocker</h1>
+      <label class="switch">
+        <input type="checkbox" id="enabled" />
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <section class="group">
+      <h2>Platforms</h2>
+      <label class="row">
+        <span>Instagram</span>
+        <input type="checkbox" id="platform-instagram" />
+      </label>
+      <label class="row">
+        <span>X / Twitter</span>
+        <input type="checkbox" id="platform-twitter" />
+      </label>
+      <label class="row">
+        <span>Facebook</span>
+        <input type="checkbox" id="platform-facebook" />
+      </label>
+      <label class="row">
+        <span>LinkedIn</span>
+        <input type="checkbox" id="platform-linkedin" />
+      </label>
+      <label class="row">
+        <span>Reddit</span>
+        <input type="checkbox" id="platform-reddit" />
+      </label>
+      <label class="row">
+        <span>TikTok</span>
+        <input type="checkbox" id="platform-tiktok" />
+      </label>
+    </section>
+
+    <section class="group">
+      <h2>Detection</h2>
+      <label class="row">
+        <span>Hide posts labeled "AI info" / "Made with AI"</span>
+        <input type="checkbox" id="detect-labels" />
+      </label>
+      <label class="row">
+        <span>Hide posts with suspected AI signals (hashtags, tool mentions)</span>
+        <input type="checkbox" id="detect-heuristics" />
+      </label>
+      <label class="row">
+        <span>Scan unlabeled images on-device (heaviest, least accurate)</span>
+        <input type="checkbox" id="detect-pixels" />
+      </label>
+      <div class="quota-row" id="quota-row">
+        <span id="quota-status">—</span>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>Pro</h2>
+      <label class="row">
+        <span>Pro (unlimited pixel scans)</span>
+        <input type="checkbox" id="is-pro" />
+      </label>
+      <p class="hint">
+        Dev flag only — no payment/license check exists yet. Flipping this
+        on just unlocks unlimited pixel scans locally.
+      </p>
+    </section>
+
+    <section class="group">
+      <h2>Action</h2>
+      <label class="row">
+        <span>Blur with reveal button</span>
+        <input type="radio" name="mode" value="blur" id="mode-blur" />
+      </label>
+      <label class="row">
+        <span>Hide completely</span>
+        <input type="radio" name="mode" value="hide" id="mode-hide" />
+      </label>
+    </section>
+
+    <footer>
+      <span id="hidden-count">0 posts hidden</span>
+      <button id="reset-count">Reset</button>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

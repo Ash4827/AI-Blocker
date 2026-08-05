@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>AI Post Blocker — offscreen inference</title>
+  </head>
+  <body>
+    <!--
+      This page is never shown to the user (chrome.offscreen). It exists so
+      WASM model inference and image decoding can run off the content
+      script's thread, keeping page scroll smooth. See src/background.js
+      for the lifecycle (created on demand, closed when idle).
+    -->
+    <script src="../../lib/onnxruntime-web/ort.wasm.min.js"></script>
+    <script src="cache.js"></script>
+    <script src="weights-store.js"></script>
+    <script src="model.js"></script>
+    <script src="offscreen.js"></script>
+  </body>
+</html>
