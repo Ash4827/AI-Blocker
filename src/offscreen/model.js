@@ -7,12 +7,8 @@
 (function () {
   const MODEL_ID = "ai-vs-human-generated-v1";
 
-  // TODO: after creating a GitHub Release and attaching
-  // ai-image-detector.onnx as its asset (see the Obsidian "Lazy Model
-  // Loading" note), replace <user>/<repo>/<tag> below with yours. GitHub
-  // Release asset URLs follow this exact pattern:
   const MODEL_DOWNLOAD_URL =
-    "https://github.com/<user>/<repo>/releases/download/<tag>/ai-image-detector.onnx";
+    "https://github.com/Ash4827/AI-Blocker/releases/download/v1.0.0-model/ai-image-detector.onnx";
 
   const INPUT_SIZE = 224;
   // dima806/ai_vs_human_generated_image_detection's preprocessor_config.json:
