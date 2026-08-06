@@ -17,22 +17,23 @@
 
   // Diagnostic: log the exact text classifyText() sees for every post,
   // unconditionally — same pattern as facebook.js/reddit.js's flair
-  // logging. Added during a cross-platform audit: live-testing against a
-  // real public profile found article[data-testid="tweet"] matching ZERO
-  // elements — X removed data-testid="tweet" entirely; real posts now use
-  // article[data-tweet-id] plus schema.org microdata instead. This log
-  // exists independent of that selector question, for whenever the
-  // container selector is fixed and the actual text-extraction quality
-  // needs checking too.
+  // logging. Added during a cross-platform audit that also caught the
+  // selector bug fixed below.
   function logExtractedText(el) {
     const text = textOf(el).replace(/\s+/g, " ").trim();
     const preview = text.length > 300 ? `${text.slice(0, 300)}…` : text;
     console.log(`${TEXT_LOG} extracted (${text.length} chars): "${preview}"`);
   }
 
-  // Every tweet/post in the timeline is an <article data-testid="tweet">.
+  // X removed data-testid="tweet" at some point — the old selector matched
+  // zero elements on live testing (see the Obsidian "Cross-Platform
+  // Selector Audit" note). Real tweets now carry data-tweet-id plus
+  // schema.org microdata (itemtype="https://schema.org/SocialMediaPosting")
+  // instead; data-tweet-id is the stable anchor. Verified against 5 real
+  // tweets: correct containers, correct text extraction, correct image
+  // extraction (avatar filtered by size, real media image kept).
   function getPostContainers() {
-    return Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+    return Array.from(document.querySelectorAll("article[data-tweet-id]"));
   }
 
   function getMediaTargets(el) {
@@ -51,7 +52,7 @@
 
   observeFeed(getPostContainers, processPost, {
     platform: "X",
-    selectorDescription: 'article[data-testid="tweet"]'
+    selectorDescription: "article[data-tweet-id]"
   });
 
   onSettingsChanged(async () => {
