@@ -287,13 +287,18 @@
       targets.push({ kind: "url", value: primary, cacheKey: primary });
     }
 
-    if (svgPlaceholderCount > 0) {
-      console.log(
-        `[AI Post Blocker][pixel] skipped ${svgPlaceholderCount} inline-SVG placeholder image(s) ` +
-          `(never a real photo) — ${targets.length} real candidate(s) found total, ` +
-          `including any via lazy-load fallback attributes (${LAZY_SRC_ATTRS.join(", ")})`
-      );
-    }
+    // Unconditional, not just on SVG rejection: shows exactly what would be
+    // sent to pixel analysis for every post checked, so "is this actually
+    // the real content image, or an avatar/icon/decorative element" is
+    // answerable directly from the console instead of inferred.
+    console.log(
+      `[AI Post Blocker][pixel] image candidates: ${targets.length} selected` +
+        (targets.length ? ` (${targets.map((t) => t.value).join(", ")})` : "") +
+        (svgPlaceholderCount > 0
+          ? ` — skipped ${svgPlaceholderCount} inline-SVG placeholder(s) (never a real photo)` +
+            (targets.length ? ", used lazy-load fallback attribute for the real URL" : ", no usable fallback found")
+          : "")
+    );
 
     return targets;
   }
