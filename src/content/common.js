@@ -15,16 +15,27 @@
 
   // Weaker signals: several must co-occur (see scoreHeuristic) before a post
   // is treated as "suspected" AI content, to keep false positives low.
+  //
+  // /g is deliberate, not decorative: scoreHeuristic() counts each DISTINCT
+  // matched substring, not each pattern that matched at least once. Without
+  // /g, a caption with both "#AI" and "#aiart" only ever produced ONE hit
+  // total (one pattern matched, regardless of how many hashtag variants it
+  // matched within), so two clearly-independent AI hashtags in the same
+  // caption never reached the "2+ hits" threshold. Confirmed against a real
+  // missed post: page name "AI IMAGE CREATOR [PROMPT]", caption hashtags
+  // "#AIContent #GrowWithAI #AI #aiart #newpost" — under the old counting,
+  // this scored 1 hit (needed 2); under match-counting, "#AI" and "#aiart"
+  // are correctly counted as 2 independent signals.
   const HEURISTIC_KEYWORDS = [
-    /#ai(art|generated|image|created)?\b/i,
-    /\bmidjourney\b/i,
-    /\bstable diffusion\b/i,
-    /\bdall-?e\b/i,
-    /\bsora\b/i,
-    /\brunway ?ml\b/i,
-    /\bai art\b/i,
-    /\bgenerative ai\b/i,
-    /\bprompt:\s/i
+    /#ai(art|generated|image|created)?\b/gi,
+    /\bmidjourney\b/gi,
+    /\bstable diffusion\b/gi,
+    /\bdall-?e\b/gi,
+    /\bsora\b/gi,
+    /\brunway ?ml\b/gi,
+    /\bai art\b/gi,
+    /\bgenerative ai\b/gi,
+    /\bprompt:\s/gi
   ];
 
   // Posts whose pixel-analysis probability is at or above this are treated
@@ -75,6 +86,33 @@
     return light;
   }
 
+  // Like textContent, but skips <script>/<style>/<noscript> and anything
+  // inside an aria-hidden subtree. A middle ground between innerText
+  // (respects CSS visibility/layout — misses text some sites render as
+  // "invisible" under conditions that don't actually mean "not real
+  // content," e.g. certain collapse/line-clamp/measurement techniques) and
+  // raw textContent (would also vacuum up embedded <script> JSON payloads
+  // and CSS rule text as false-positive-prone noise).
+  function safeTextContent(el) {
+    let text = "";
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_ACCEPT;
+        if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(parent.tagName)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (parent.closest('[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    let node;
+    while ((node = walker.nextNode())) {
+      text += node.nodeValue + " ";
+    }
+    return text;
+  }
+
   function textOf(el) {
     if (!el) return "";
     const alt = queryAllDeep(el, "img[alt]")
@@ -86,9 +124,16 @@
     const titles = queryAllDeep(el, "[title]")
       .map((n) => n.getAttribute("title") || "")
       .join(" ");
+    // innerText alone has a real gap: some sites render caption/header text
+    // in ways innerText's layout-based visibility algorithm treats as
+    // "not rendered" even though it's genuinely on-screen content (not
+    // display:none noise) — e.g. certain measurement/virtualization
+    // techniques. safeTextContent() is appended as a supplement, not a
+    // replacement, specifically to catch that gap without picking up
+    // script/style/aria-hidden noise the way raw textContent would.
     const ownText = el.shadowRoot
-      ? `${el.innerText || ""} ${el.shadowRoot.textContent || ""}`
-      : el.innerText || "";
+      ? `${el.innerText || ""} ${safeTextContent(el)} ${el.shadowRoot.textContent || ""}`
+      : `${el.innerText || ""} ${safeTextContent(el)}`;
     return `${ownText} ${alt} ${aria} ${titles}`;
   }
 
@@ -101,14 +146,20 @@
   }
 
   // Requires at least two distinct heuristic hits to reduce false positives
-  // (a single "#ai" hashtag is common noise; two co-occurring signals is not).
+  // (a single "#ai" hashtag is common noise; two co-occurring signals is
+  // not). "Distinct" means distinct matched TEXT, not distinct pattern in
+  // the list — see the comment on HEURISTIC_KEYWORDS for why that
+  // distinction matters (it's the difference between catching "#AI
+  // #aiart" together and missing it entirely).
   function scoreHeuristic(el) {
     const text = textOf(el);
-    const hits = [];
+    const hits = new Set();
     for (const pattern of HEURISTIC_KEYWORDS) {
-      if (pattern.test(text)) hits.push(pattern.source);
+      const matches = text.match(pattern); // /g on every pattern → all matches, not just the first
+      if (!matches) continue;
+      for (const m of matches) hits.add(m.toLowerCase());
     }
-    return hits;
+    return Array.from(hits);
   }
 
   // Text/label tier only — synchronous, no network or inference involved.
@@ -191,21 +242,60 @@
     chrome.runtime.sendMessage({ type: "POST_HIDDEN", reason: decision.reason });
   }
 
+  // Common attribute names sites stash the real image URL in before
+  // swapping it into src/srcset once lazy-loading resolves. Checked as a
+  // fallback specifically when the current src is an inline SVG
+  // placeholder — see getContentImages below for why that case needs one.
+  const LAZY_SRC_ATTRS = ["data-src", "data-lazy-src", "data-original"];
+
   // Candidate <img> media for pixel analysis, filtered to drop small
   // avatar/icon/emoji images that aren't worth the inference cost. Returns
   // pixel-analysis targets in the { kind: 'url', value, cacheKey } shape
   // analyzePixelsIfEligible expects.
+  //
+  // Inline SVG placeholders (data:image/svg+xml — a blur-up/skeleton
+  // gradient, not a real photo) are explicitly excluded rather than relying
+  // on the size filter to catch them: sites commonly size these to match
+  // the final image's layout dimensions (to prevent layout shift while the
+  // real photo loads), so naturalWidth/naturalHeight alone can't tell a
+  // placeholder from real content — a real photo is never an inline SVG, a
+  // content-type check can. When one is found, LAZY_SRC_ATTRS is checked
+  // for the real pending URL as a fallback (size filtering is skipped for
+  // that fallback candidate — its real dimensions aren't knowable
+  // synchronously since it hasn't loaded yet).
   function getContentImages(el, { minSize = 150 } = {}) {
-    return queryAllDeep(el, "img[src]")
-      .filter((img) => {
-        const w = img.naturalWidth || img.width || 0;
-        const h = img.naturalHeight || img.height || 0;
-        return w >= minSize && h >= minSize;
-      })
-      .map((img) => {
-        const value = img.currentSrc || img.src;
-        return { kind: "url", value, cacheKey: value };
-      });
+    const targets = [];
+    let svgPlaceholderCount = 0;
+
+    for (const img of queryAllDeep(el, "img[src]")) {
+      const primary = img.currentSrc || img.src || "";
+
+      if (primary.startsWith("data:image/svg+xml")) {
+        svgPlaceholderCount++;
+        const lazySrc = LAZY_SRC_ATTRS.map((attr) => img.getAttribute(attr)).find(
+          (v) => v && !v.startsWith("data:image/svg+xml")
+        );
+        if (lazySrc) targets.push({ kind: "url", value: lazySrc, cacheKey: lazySrc });
+        continue;
+      }
+
+      if (!primary) continue;
+      const w = img.naturalWidth || img.width || 0;
+      const h = img.naturalHeight || img.height || 0;
+      if (w < minSize || h < minSize) continue;
+
+      targets.push({ kind: "url", value: primary, cacheKey: primary });
+    }
+
+    if (svgPlaceholderCount > 0) {
+      console.log(
+        `[AI Post Blocker][pixel] skipped ${svgPlaceholderCount} inline-SVG placeholder image(s) ` +
+          `(never a real photo) — ${targets.length} real candidate(s) found total, ` +
+          `including any via lazy-load fallback attributes (${LAZY_SRC_ATTRS.join(", ")})`
+      );
+    }
+
+    return targets;
   }
 
   function clearHideState(el) {
@@ -391,6 +481,7 @@
     analyzePixelsIfEligible,
     observeFeed,
     queryAllDeep,
-    getContentImages
+    getContentImages,
+    textOf // exported for platform-specific diagnostic logging (see facebook.js)
   };
 })();
