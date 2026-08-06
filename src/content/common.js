@@ -165,6 +165,16 @@
       return;
     }
 
+    // The one place all three detection tiers converge — logs which path
+    // actually caught this post. Only "pixel" should ever cost a quota
+    // unit; "label" and "heuristic" are free/unlimited by design (see
+    // [[Freemium Gating]]) and should never show a quota tally attached.
+    console.log(
+      `[AI Post Blocker] HIDDEN via "${decision.reason}"` +
+        (decision.detail ? ` (${decision.detail})` : "") +
+        (decision.reason === "pixel" ? " — quota-metered" : " — free, unlimited")
+    );
+
     el.classList.add(
       settings.mode === "hide" ? "ai-blocker-hidden" : "ai-blocker-blurred"
     );
@@ -220,6 +230,17 @@
   // come back with { quotaExceeded: true } once the free daily allowance
   // (or an isPro override) says no — see src/background.js and
   // src/offscreen/offscreen.js for where that's enforced.
+  const PIXEL_LOG = "[AI Post Blocker][pixel]";
+
+  // Short, log-friendly identifier for a target without dumping a full
+  // (potentially huge) data: URL into the console.
+  function targetLabel(target) {
+    if (target.kind === "dataurl") {
+      return `<video frame, cacheKey=${(target.cacheKey || "").slice(0, 80)}>`;
+    }
+    return target.value;
+  }
+
   async function analyzePixelsIfEligible(el, settings, getMediaTargets) {
     if (!settings.pixelAnalysis) return;
     if (quotaKnownExhausted) return;
@@ -227,7 +248,26 @@
     let targets;
     try {
       targets = getMediaTargets(el) || [];
-    } catch {
+    } catch (err) {
+      console.warn(`${PIXEL_LOG} getMediaTargets() threw, skipping this post:`, err);
+      return;
+    }
+
+    if (targets.length === 0) {
+      // Distinguishes "genuinely no media" (not interesting, don't log) from
+      // "media exists in the DOM but nothing was eligible" (interesting —
+      // could mean lazy-loaded images that haven't finished loading yet,
+      // everything under the size filter, or (TikTok) a failed frame-grab).
+      const hasImg = queryAllDeep(el, "img").length > 0;
+      const hasVideo = queryAllDeep(el, "video").length > 0;
+      if (hasImg || hasVideo) {
+        console.log(
+          `${PIXEL_LOG} post has media (img=${hasImg} video=${hasVideo}) but extracted 0 ` +
+            `pixel-analysis targets — never reached the model. Likely causes: images still ` +
+            `lazy-loading (naturalWidth still 0), all below the ≥150px eligibility filter, or ` +
+            `(TikTok) canvas frame-grab failed.`
+        );
+      }
       return;
     }
 
@@ -239,6 +279,7 @@
         return; // already hidden by an earlier target or a race with the text tier
       }
 
+      const label = targetLabel(target);
       const message = {
         type: "CLASSIFY_IMAGE_PIXELS",
         cacheKey: target.cacheKey || target.value
@@ -249,26 +290,58 @@
       let result;
       try {
         result = await chrome.runtime.sendMessage(message);
-      } catch {
-        continue; // offscreen/background not reachable — fail open, no retry
+      } catch (err) {
+        // Background/offscreen document unreachable entirely — not a fetch
+        // or CORS problem, the message never got a response at all.
+        console.warn(`${PIXEL_LOG} message channel unreachable, image never reached the model: ${label}`, err);
+        continue;
       }
 
       if (result?.quotaExceeded) {
         quotaKnownExhausted = true;
+        console.log(`${PIXEL_LOG} QUOTA EXCEEDED — image never reached the model: ${label}`);
         return;
       }
 
-      if (result?.aiProbability >= PIXEL_AI_THRESHOLD) {
-        applyHideDecision(
-          el,
-          {
-            hidden: true,
-            reason: "pixel",
-            detail: `p=${result.aiProbability.toFixed(2)}`
-          },
-          settings
+      if (result?.error) {
+        // stage distinguishes where it died: 'fetch-network' (fetch() threw
+        // — opaque by browser design, could be CORS/host_permission/DNS/
+        // network), 'fetch-http' (fetch() resolved but !response.ok — NOT a
+        // CORS issue, the request went through and the server itself
+        // rejected it), or 'decode' (createImageBitmap threw — corrupt or
+        // unsupported image data, not a network problem at all).
+        console.warn(
+          `${PIXEL_LOG} DROPPED before scoring [stage=${result.stage || "unknown"}]: ${label} — ${result.error}`
         );
-        return;
+        continue;
+      }
+
+      if (typeof result?.aiProbability === "number") {
+        const p = result.aiProbability;
+        const crosses = p >= PIXEL_AI_THRESHOLD;
+        // Quota tally only present on a fresh (non-cached) scan — a cache
+        // hit doesn't cost a scan, so there's nothing new to report here.
+        // If you see SCORED lines piling up without "[quota N/M]" attached,
+        // every hit is a cache hit and the counter has no reason to move.
+        const quotaTag = result.quota
+          ? ` [quota ${result.quota.used}/${result.quota.limit}]`
+          : result.cached
+            ? " [cache hit, no quota cost]"
+            : "";
+        // Logged unconditionally — this is the raw score, before
+        // thresholding, for every image that actually made it to the model.
+        console.log(
+          `${PIXEL_LOG} SCORED p=${p.toFixed(3)} (threshold=${PIXEL_AI_THRESHOLD}) → ` +
+            `${crosses ? "HIDE" : "keep visible"}${quotaTag}: ${label}`
+        );
+        if (crosses) {
+          applyHideDecision(
+            el,
+            { hidden: true, reason: "pixel", detail: `p=${p.toFixed(2)}` },
+            settings
+          );
+          return;
+        }
       }
     }
   }
