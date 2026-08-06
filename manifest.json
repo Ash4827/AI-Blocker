@@ -17,7 +17,8 @@
     "https://pbs.twimg.com/*",
     "https://*.licdn.com/*",
     "https://*.redd.it/*",
-    "https://*.redditmedia.com/*"
+    "https://*.redditmedia.com/*",
+    "https://www.redditstatic.com/*"
   ],
   "background": {
     "service_worker": "src/background.js"

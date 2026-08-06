@@ -44,5 +44,22 @@
     });
   }
 
-  window.AIBlockerWeightsStore = { getStoredWeights, storeWeights };
+  // Used when ort.InferenceSession.create() fails on cached bytes — there's
+  // no way to validate an ArrayBuffer is a well-formed ONNX file before
+  // handing it to the parser, so the recovery strategy is: if parsing ever
+  // fails, assume the cached copy might be bad (an interrupted download
+  // from a prior session, corrupted in a way that never gets re-checked
+  // otherwise) and clear it, so the next attempt re-downloads from scratch
+  // instead of repeating the same failure forever.
+  async function deleteWeights(modelId) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).delete(modelId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  window.AIBlockerWeightsStore = { getStoredWeights, storeWeights, deleteWeights };
 })();

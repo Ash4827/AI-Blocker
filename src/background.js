@@ -83,10 +83,50 @@ async function readPixelQuota() {
   };
 }
 
-// Quota is actually *consumed* in src/offscreen/offscreen.js, not here —
-// it has to happen after the cache check (a cache hit shouldn't cost a
-// scan) and right before inference, both of which live there. This
-// handler only relays; readPixelQuota() above is read-only, for the popup.
+// Serializes every quota read+write through a single in-process promise
+// chain. chrome.runtime.onMessage handlers in this service worker can fire
+// concurrently (many images in flight during a scroll session), and
+// chrome.storage has no transactions of its own — without this, two
+// concurrent calls can both read usedToday=N before either writes N+1,
+// clobbering one increment. See the Obsidian "Freemium Gating" note for
+// the simulation that reproduced this exact race.
+let quotaQueue = Promise.resolve();
+
+// Actually *consumes* one unit of quota — moved here from
+// src/offscreen/offscreen.js, where it used to live. It can't live there:
+// per Chrome's own docs, "chrome.runtime is the only extensions API
+// supported by offscreen documents" — chrome.storage is genuinely
+// undefined in that context, not just unreliable. Every other
+// chrome.storage touch in the offscreen document (cache.js, model.js) is
+// wrapped in try/catch and degrades silently; this was the one call that
+// wasn't, so it threw on every single invocation. Relayed via
+// CONSUME_PIXEL_QUOTA below — the offscreen document still decides *when*
+// to call this (after its own cache check, right before inference, so a
+// cache hit doesn't cost a scan), it just can't do the storage read/write
+// itself anymore.
+function consumePixelQuota() {
+  const attempt = quotaQueue.then(async () => {
+    const { isPro = false } = await chrome.storage.sync.get("isPro");
+    if (isPro) return { allowed: true, isPro: true };
+
+    const { pixelScansUsedToday = 0, pixelScansDate = "" } =
+      await chrome.storage.local.get(["pixelScansUsedToday", "pixelScansDate"]);
+
+    const today = todayKey();
+    const usedToday = pixelScansDate === today ? pixelScansUsedToday : 0;
+    if (usedToday >= FREE_DAILY_PIXEL_SCANS) return { allowed: false };
+
+    const nextUsed = usedToday + 1;
+    await chrome.storage.local.set({
+      pixelScansUsedToday: nextUsed,
+      pixelScansDate: today
+    });
+    return { allowed: true, used: nextUsed, limit: FREE_DAILY_PIXEL_SCANS };
+  });
+  quotaQueue = attempt.catch(() => {});
+  return attempt;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "POST_HIDDEN") {
     incrementHiddenCount();
@@ -95,6 +135,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "GET_PIXEL_QUOTA_STATUS") {
     readPixelQuota().then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === "CONSUME_PIXEL_QUOTA") {
+    consumePixelQuota().then(sendResponse);
     return true;
   }
 

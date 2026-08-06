@@ -1,9 +1,14 @@
 *.log
 
-# Model conversion output (scripts/convert_to_onnx.py) — hosted as a
-# GitHub Release asset instead of committed, and the fp32 intermediate is
-# 327.5 MB, never meant to be tracked even temporarily.
+# Model conversion output (scripts/convert_to_onnx.py). The fp32
+# intermediate (327.5 MB) is never meant to be tracked, even temporarily.
+# The final quantized model IS tracked (see MODEL_DOWNLOAD_URL in
+# src/offscreen/model.js) — GitHub Release assets don't work with fetch()
+# from an extension page (redirect to a signed URL with no CORS header on
+# any hop), so it's served via raw.githubusercontent.com instead, which
+# means it has to actually be a file in this repo.
 scripts/*.onnx
+!scripts/ai-image-detector.onnx
 
 # In case the conversion venv ever gets created inside the project
 # instead of in a scratch/temp dir.

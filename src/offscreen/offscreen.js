@@ -4,11 +4,6 @@
 
   const LOG = "[AI Post Blocker][offscreen]";
 
-  // Kept in sync with background.js's FREE_DAILY_PIXEL_SCANS by convention
-  // (no bundler/shared-module setup in this extension) — see the comment
-  // there and the Obsidian "Freemium Gating" note.
-  const FREE_DAILY_PIXEL_SCANS = 15;
-
   if (typeof ort !== "undefined") {
     ort.env.wasm.wasmPaths = chrome.runtime.getURL("lib/onnxruntime-web/");
     // Single-threaded: avoids requiring cross-origin isolation (COOP/COEP)
@@ -16,52 +11,19 @@
     ort.env.wasm.numThreads = 1;
   }
 
-  function todayKey() {
-    return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
-  }
-
-  // Serializes every quota read+write through a single in-process promise
-  // chain. Why this exists: observeFeed() in common.js deliberately does
-  // NOT await onFound() (see its comment) so a batch of newly-scrolled-in
-  // posts triggers many concurrent classifyPayload() calls. Without this,
-  // two concurrent calls can both read usedToday=N before either writes
-  // N+1, and the second write clobbers the first — a classic lost-update
-  // race. chrome.storage has no transactions of its own; this is the
-  // cheapest correct fix because every quota write happens in this one JS
-  // realm (the offscreen document) — there's no cross-realm concurrency to
-  // guard against, only intra-realm interleaving via awaits, which a plain
-  // promise chain fully serializes.
-  let quotaQueue = Promise.resolve();
-
-  // Consumes one unit of the free daily allowance. Lives here (not
-  // background.js) specifically so it only fires on an actual cache miss —
-  // re-scrolling past an already-classified image must not cost a scan.
+  // Quota can't be checked/consumed directly in this file: per Chrome's own
+  // docs, "chrome.runtime is the only extensions API supported by offscreen
+  // documents" — chrome.storage is genuinely undefined here, not just
+  // unreliable. (This used to do the chrome.storage.sync/.local read-write
+  // inline, which is exactly what was throwing "Cannot read properties of
+  // undefined (reading 'sync')" on every single call — see the Obsidian
+  // "Pixel Analysis Sync Error" note.) Relayed to background.js instead,
+  // which has full chrome.storage access. Still called from the same spot
+  // below — after the cache check, right before inference — so a cache hit
+  // still doesn't cost a scan; only *where* the storage read/write happens
+  // changed, not *when* it's triggered.
   function consumePixelQuota() {
-    const attempt = quotaQueue.then(async () => {
-      const { isPro = false } = await chrome.storage.sync.get("isPro");
-      if (isPro) return { allowed: true, isPro: true };
-
-      const { pixelScansUsedToday = 0, pixelScansDate = "" } =
-        await chrome.storage.local.get(["pixelScansUsedToday", "pixelScansDate"]);
-
-      const today = todayKey();
-      const usedToday = pixelScansDate === today ? pixelScansUsedToday : 0;
-      console.log(`${LOG} quota check: usedToday=${usedToday}/${FREE_DAILY_PIXEL_SCANS}`);
-      if (usedToday >= FREE_DAILY_PIXEL_SCANS) return { allowed: false };
-
-      const nextUsed = usedToday + 1;
-      await chrome.storage.local.set({
-        pixelScansUsedToday: nextUsed,
-        pixelScansDate: today
-      });
-      console.log(`${LOG} quota consumed: ${nextUsed}/${FREE_DAILY_PIXEL_SCANS}`);
-      return { allowed: true, used: nextUsed, limit: FREE_DAILY_PIXEL_SCANS };
-    });
-    // Keep the queue itself always-resolved so one failed attempt doesn't
-    // permanently jam every attempt after it; the real result/error still
-    // flows to this call's own caller via `attempt`.
-    quotaQueue = attempt.catch(() => {});
-    return attempt;
+    return chrome.runtime.sendMessage({ type: "CONSUME_PIXEL_QUOTA" });
   }
 
   // Note on where these logs are visible: this file runs in the offscreen
@@ -144,7 +106,14 @@
         // Catches anything unexpected outside the fetch/decode stages above
         // (e.g. the model itself failing to load) — still tagged so it
         // shows up distinctly rather than looking like a low score.
-        console.warn(`${LOG} unexpected failure [inference]`, err?.message || err);
+        //
+        // Logging err.stack (not just err.message) deliberately: the
+        // message-passing round-trip back to the content script only ever
+        // carries a stringified message, discarding the stack entirely —
+        // this offscreen-document console is the ONLY place the real
+        // originating file/line survives. See "Inspect views: offscreen.html"
+        // in chrome://extensions to actually read it.
+        console.warn(`${LOG} unexpected failure [inference]`, err?.stack || err);
         sendResponse({ error: String(err?.message || err), stage: "inference" });
       });
 
