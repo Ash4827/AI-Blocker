@@ -56,8 +56,12 @@ optionally — score highly on a local, on-device pixel scan.
   network and cached in **IndexedDB** (`src/offscreen/weights-store.js`)
   the first time pixel analysis actually runs an inference, not merely when
   the popup toggle is flipped. Until then, the install stays small and
-  nothing extra downloads. `src/offscreen/model.js`'s `MODEL_DOWNLOAD_URL`
-  is a placeholder — see `models/README.md` for why and what to fill in.
+  nothing extra downloads. Hosted at `raw.githubusercontent.com` (not
+  GitHub Releases — Release asset URLs redirect to a signed blob-storage
+  URL with no CORS header on any hop, so `fetch()` fails there
+  unconditionally; verified before switching). See `models/README.md`
+  for the full hosting story — the model file itself is tracked in this
+  repo as a result (`scripts/ai-image-detector.onnx`, ~83 MB).
 - **Gating**: `analyzePixelsIfEligible()` in `common.js` only fires for
   posts the label/heuristic tiers left unflagged, capped at 3 images/videos
   per post, and only if the free daily allowance isn't exhausted (see
@@ -72,9 +76,13 @@ optionally — score highly on a local, on-device pixel scan.
 - **Cross-origin image fetch**: the offscreen document fetches image URLs
   directly, which requires `host_permissions` for each platform's media CDN
   (`*.cdninstagram.com`, `*.fbcdn.net`, `pbs.twimg.com`, `*.licdn.com`,
-  `*.redd.it`, `*.redditmedia.com` — declared in `manifest.json`). These
-  hosts can change; if pixel analysis silently stops working for a
-  platform, check whether its CDN domain moved.
+  `*.redd.it`, `*.redditmedia.com`, `www.redditstatic.com` — declared in
+  `manifest.json`). These hosts can change; if pixel analysis silently
+  stops working for a platform, check whether its CDN domain moved.
+  `www.redditstatic.com` (avatar images) was missed initially — it's not
+  a subdomain of `redd.it`, so the `*.redd.it` wildcard never covered it,
+  and every avatar fetch failed with an opaque `TypeError: Failed to
+  fetch` until it was added explicitly.
 
 ## Freemium gating
 
@@ -193,15 +201,19 @@ change there. Pixel analysis is metered:
   re-evaluated until the feed re-renders them as new DOM nodes.
 - Icons in `icons/` are auto-generated placeholders — swap them for real
   artwork before publishing.
-- **`MODEL_DOWNLOAD_URL` in `src/offscreen/model.js` is still a
-  placeholder.** The model is chosen, license-verified (Apache-2.0),
-  converted, quantized (82.9 MB), and verified against its PyTorch
-  original — see `models/README.md`. Pixel analysis stays inert until the
-  resulting `scripts/ai-image-detector.onnx` is hosted somewhere (a
-  GitHub repo, a Hugging Face repo you control, a CDN — your call) and
-  that one constant is updated to point at it.
-- Pixel-analysis quota isn't transactionally safe against a burst of
-  concurrent scans across tabs — could overshoot the daily limit by a
-  small margin. Fine for a soft allowance, not a hard boundary.
 - `isPro` has no real payment/license verification behind it yet — it's a
   plain storage flag, flippable via the popup's dev checkbox.
+- **The model binary is tracked in git** (`scripts/ai-image-detector.onnx`,
+  ~83 MB) because it's hosted via `raw.githubusercontent.com`, which
+  requires the file to actually live in the repo — GitHub Releases would
+  have kept it out of history but its asset URLs don't support `fetch()`
+  from an extension page at all (no CORS header on the redirect chain).
+  See `models/README.md` for the full story. Revisit with a real CDN if
+  repo size or a dedicated host ever starts to matter.
+- **`chrome.storage` is unavailable inside the offscreen document** — per
+  Chrome's own docs, `chrome.runtime` is the only extensions API
+  supported there. Any new code added to `src/offscreen/*.js` that needs
+  persistent storage has to relay through `background.js` (see how
+  `CONSUME_PIXEL_QUOTA` does it) rather than calling `chrome.storage`
+  directly — the latter will throw `Cannot read properties of undefined
+  (reading '...')` unconditionally, not intermittently.

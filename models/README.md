@@ -62,25 +62,41 @@ If you swap in a different model, `bitmapToTensor()` and
 `CHANNEL_MEAN`/`CHANNEL_STD` in `model.js` are the entire contract
 boundary to update.
 
-## Lazy loading — no weights bundled in the package
+## Lazy loading — no weights bundled in the *package*, but tracked in git
 
 Per the "keep the default install small" requirement, the `.onnx` file is
-**not** included in this repo/package. Instead:
+**not** part of the loaded extension — it's fetched at runtime, not
+included via `web_accessible_resources` or similar:
 
-- `src/offscreen/model.js`'s `MODEL_DOWNLOAD_URL` is a placeholder
-  constant that needs to point at wherever the converted file ends up
-  hosted.
 - The first time pixel analysis runs an actual inference (not a cache
-  hit), `loadModelBytes()` fetches that URL, then stores the raw bytes in
-  **IndexedDB** (`src/offscreen/weights-store.js`) so every later
-  inference — including after the offscreen document is torn down and
-  recreated — reuses the cached copy instead of re-downloading.
-- **Why the URL is a placeholder rather than filled in**: hosting the
-  converted file requires publishing it somewhere (a GitHub repo, a
-  Hugging Face account, a CDN) — that's an account/publishing decision
-  only you can make, not something to guess at or fabricate a URL for.
-  Once you've picked a host, drop the converted `.onnx` there and update
-  `MODEL_DOWNLOAD_URL`.
+  hit), `loadModelBytes()` in `src/offscreen/model.js` fetches
+  `MODEL_DOWNLOAD_URL`, then stores the raw bytes in **IndexedDB**
+  (`src/offscreen/weights-store.js`) so every later inference — including
+  after the offscreen document is torn down and recreated — reuses the
+  cached copy instead of re-downloading.
+
+**Hosting, round 2 — GitHub Releases didn't actually work.** The first
+attempt hosted the file as a GitHub Release asset. That fails 100% of
+the time when fetched from an extension page: the download URL 302s to
+a signed `release-assets.githubusercontent.com`/blob-storage URL, and
+neither the redirect response nor the final asset carries an
+`Access-Control-Allow-Origin` header — `fetch()` throws an opaque
+`TypeError: Failed to fetch` regardless of `host_permissions`, since
+that's a CORS problem, not a permissions one. Confirmed by comparing
+response headers directly (`curl -I`) before switching.
+
+**Current hosting: `raw.githubusercontent.com`**, which serves files
+directly with `Access-Control-Allow-Origin: *` — verified live, not
+assumed. This means `scripts/ai-image-detector.onnx` **is committed to
+this repo** (see `.gitignore` — it's explicitly un-ignored via a
+negation pattern, while the 327.5 MB fp32 intermediate stays ignored).
+That's a real tradeoff: an 82.9 MB binary now lives in git history
+permanently, and every clone pays for it. GitHub Releases would have
+avoided that (assets aren't part of git history) — it just didn't work
+with `fetch()`. Revisit with a real CDN (Cloudflare R2, S3 with proper
+CORS config, etc.) if this extension gets enough real usage that repo
+size or a dedicated host starts to matter; `raw.githubusercontent.com`
+is a reasonable stopgap, not a scalable answer.
 
 ## Realistic expectations (measured, not estimated)
 
